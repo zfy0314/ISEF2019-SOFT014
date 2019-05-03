@@ -1,0 +1,15 @@
+cython
+matplotlib
+numpy==1.16.2
+scipy
+opencv-python==3.4.5.20
+pyyaml==4.2b2
+packaging
+pycocotools
+tensorboardX
+tqdm
+pillow
+scikit-image
+gensim
+graphviz
+torchvision==0.2.2post3
