@@ -7,7 +7,8 @@ Adapted from Danfei Xu. In particular, slow code was removed
 import os
 import numpy as np
 import logging
-from six.moves import cPickle as pickle
+#from six.moves import cPickle as pickle
+import pickle
 import json
 import csv
 from tqdm import tqdm
@@ -40,6 +41,7 @@ def eval_rel_results(all_results, output_dir, do_val):
     else:
         eval_sets = (False, True)
 
+    prd_k_set = (1, 2)
     for phrdet in eval_sets:
         eval_metric = 'phrdet' if phrdet else 'reldet'  
         print('{}:'.format(eval_metric))
@@ -63,13 +65,36 @@ def eval_rel_results(all_results, output_dir, do_val):
                     det_labels_o_top = np.zeros(0, dtype=np.int32)
                     det_scores_top = np.zeros(0, dtype=np.float32)
                 else:
+                    out_dict = {}
                     det_boxes_sbj = res['sbj_boxes']  # (#num_rel, 4)
+                    #print('det_boxes_sbj:')
+                    #print(det_boxes_sbj)
+                    out_dict['det_boxes_sbj'] = det_boxes_sbj
                     det_boxes_obj = res['obj_boxes']  # (#num_rel, 4)
+                    #print('det_boxes_obj:')
+                    #print(det_boxes_obj)
+                    out_dict['det_boxes_obj'] = det_boxes_obj
                     det_labels_sbj = res['sbj_labels']  # (#num_rel,)
+                    #print('det_labels_sbj:')
+                    #print(det_labels_sbj)
+                    out_dict['det_labels_sbj'] = det_labels_sbj
                     det_labels_obj = res['obj_labels']  # (#num_rel,)
+                    #print('det_labels_obj:')
+                    #print(det_labels_obj)
+                    out_dict['det_labels_obj'] = det_labels_obj
                     det_scores_sbj = res['sbj_scores']  # (#num_rel,)
+                    #print('det_scores_sbj:')
+                    #print(det_scores_sbj)
+                    out_dict['det_scores_sbj'] = det_scores_sbj
                     det_scores_obj = res['obj_scores']  # (#num_rel,)
+                    #print('det_scores_obj:')
+                    #print(det_scores_obj)
+                    out_dict['det_scores_obj'] =  det_scores_obj
                     det_scores_prd = res['prd_scores'][:, 1:]
+                    #print('det_scores_prd:')
+                    #print(det_scores_prd)
+                    out_dict['det_scores_prd'] = det_scores_prd
+
 
                     det_labels_prd = np.argsort(-det_scores_prd, axis=1)
                     det_scores_prd = -np.sort(-det_scores_prd, axis=1)
@@ -89,12 +114,23 @@ def eval_rel_results(all_results, output_dir, do_val):
 #                     det_boxes_so_top = det_boxes_so_top[cand_inds]
 #                     det_labels_spo_top = det_labels_spo_top[cand_inds]
 #                     det_scores_top = det_scores_top[cand_inds]
-
+                    
                     det_boxes_s_top = det_boxes_so_top[:, :4]
                     det_boxes_o_top = det_boxes_so_top[:, 4:]
                     det_labels_s_top = det_labels_spo_top[:, 0]
                     det_labels_p_top = det_labels_spo_top[:, 1]
                     det_labels_o_top = det_labels_spo_top[:, 2]
+                    out_dict = {}
+                    out_dict['boxes_s_top'] = det_boxes_s_top
+                    out_dict['boxes_o_top'] = det_boxes_o_top
+                    out_dict['labels_s_top'] = det_labels_s_top
+                    out_dict['labels_p_top'] = det_labels_p_top
+                    out_dict['labels_o_top'] = det_labels_o_top
+                    out_dict['scores_top'] = det_scores_top
+                    out_dict['image'] = res['image']
+                    with open('VRD-{}-{}.pkl'.format(im_i, prd_k), 'wb') as fout:
+                        pickle.dump(out_dict, fout, pickle.HIGHEST_PROTOCOL)
+
 
                 topk_dets.append(dict(image=res['image'],
                                       det_boxes_s_top=det_boxes_s_top,

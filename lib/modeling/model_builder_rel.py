@@ -68,7 +68,7 @@ def check_inference(net_func):
 
 def get_obj_prd_vecs(dataset_name):
     word2vec_model = gensim.models.KeyedVectors.load_word2vec_format(
-        cfg.DATA_DIR + '/word2vec_model/GoogleNews-vectors-negative300.bin', binary=True)
+        'pretrained/GoogleNews-vectors-negative300.bin', binary=True)
     logger.info('Model loaded.')
     # change everything into lowercase
     all_keys = list(word2vec_model.vocab.keys())
@@ -78,14 +78,14 @@ def get_obj_prd_vecs(dataset_name):
     logger.info('Wiki words converted to lowercase.')
 
     if dataset_name.find('vrd') >= 0:
-        with open(cfg.DATA_DIR + '/vrd/objects.json') as f:
+        with open('pretrained/objects.json') as f:
             obj_cats = json.load(f)
-        with open(cfg.DATA_DIR + '/vrd/predicates.json') as f:
+        with open('pretrained/predicates.json') as f:
             prd_cats = json.load(f)
     elif dataset_name.find('vg') >= 0:
-        with open(cfg.DATA_DIR + '/vg/objects.json') as f:
+        with open('pretrained/objects.json') as f:
             obj_cats = json.load(f)
-        with open(cfg.DATA_DIR + '/vg/predicates.json') as f:
+        with open('pretrained/predicates.json') as f:
             prd_cats = json.load(f)
     else:
         raise NotImplementedError
@@ -123,9 +123,9 @@ class Generalized_RCNN(nn.Module):
         self.Conv_Body = get_func(cfg.MODEL.CONV_BODY)()
 
         # Region Proposal Network
-        if cfg.RPN.RPN_ON:
-            self.RPN = rpn_heads.generic_rpn_outputs(
-                self.Conv_Body.dim_out, self.Conv_Body.spatial_scale)
+        #if cfg.RPN.RPN_ON:
+        self.RPN = rpn_heads.generic_rpn_outputs(
+            self.Conv_Body.dim_out, self.Conv_Body.spatial_scale)
             
         if cfg.FPN.FPN_ON:
             # Only supports case when RPN and ROI min levels are the same

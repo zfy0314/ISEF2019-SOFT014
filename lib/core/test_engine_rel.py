@@ -30,7 +30,8 @@ import os
 import yaml
 import gensim
 import json
-from six.moves import cPickle as pickle
+import pickle
+#from six.moves import cPickle as pickle
 
 import torch
 
@@ -83,6 +84,7 @@ def run_inference(
             # In this case we're either running inference on the entire dataset in a
             # single process or (if multi_gpu_testing is True) using this process to
             # launch subprocesses that each run inference on a range of the dataset
+            logger.info('pid {}: using parent case'.format(os.getpid()))
             all_results = []
             for i in range(len(cfg.TEST.DATASETS)):
                 dataset_name, proposal_file = get_inference_dataset(i)
@@ -101,6 +103,7 @@ def run_inference(
             # Subprocess child case:
             # In this case test_net was called via subprocess.Popen to execute on a
             # range of inputs on a single dataset
+            logger.info('pid {}: using child case'.format(os.getpid()))
             dataset_name, proposal_file = get_inference_dataset(0, is_parent=False)
             output_dir = args.output_dir
             return child_func(
@@ -246,6 +249,7 @@ def test_net(
                 start_ind + 1, end_ind, total_num_images, start_ind + i + 1,
                 start_ind + num_images, det_time, eta))
 
+    logger.info('finish inferencing all images.')
     cfg_yaml = yaml.dump(cfg)
     if ind_range is not None:
         det_name = 'rel_detection_range_%s_%s.pkl' % tuple(ind_range)
@@ -305,3 +309,76 @@ def get_roidb_and_dataset(dataset_name, proposal_file, ind_range, do_val=True):
         total_num_images = end
 
     return roidb, dataset, start, end, total_num_images
+
+
+def zfy_inference(
+        args,
+        proposal_file,
+        output_dir,
+        ind_range=None,
+        gpu_id=0):
+    #imgs = os.listdir('/home/zfy/Data/projects/isef/Large-Scale-VRD/data/vrd/train_images')
+    imgs = ["test.jpg"]
+    finals = []
+    model = initialize_model_from_cfg(args, gpu_id=gpu_id)
+    dataset_name, proposal = get_inference_dataset(0)
+    for xyz in imgs:
+        im_file = os.path.join('/home/zfy/Data/projects/isef/Large-Scale-VRD/', xyz)
+        #im_file = xyz
+        timers = defaultdict(Timer)
+        box_proposals = None      
+        im = cv2.imread(im_file)
+        
+        
+        im_results = im_detect_rels(model, im, dataset_name, box_proposals, timers)
+        im_results.update(dict(image=im_file))
+
+        det_boxes_sbj = im_results['sbj_boxes']  # (#num_rel, 4)
+        det_boxes_obj = im_results['obj_boxes']  # (#num_rel, 4)
+        det_labels_sbj = im_results['sbj_labels']  # (#num_rel,)
+        det_labels_obj = im_results['obj_labels']  # (#num_rel,)
+        det_scores_sbj = im_results['sbj_scores']  # (#num_rel,)
+        det_scores_obj = im_results['obj_scores']  # (#num_rel,)
+        det_scores_prd = im_results['prd_scores'][:, 1:]
+
+        det_labels_prd = np.argsort(-det_scores_prd, axis=1)
+        det_scores_prd = -np.sort(-det_scores_prd, axis=1)
+
+        det_scores_so = det_scores_sbj * det_scores_obj
+        det_scores_spo = det_scores_so[:, None] * det_scores_prd[:, :2]
+        det_scores_inds = argsort_desc(det_scores_spo)[:100]
+        det_scores_top = det_scores_spo[det_scores_inds[:, 0], det_scores_inds[:, 1]]
+        det_boxes_so_top = np.hstack(
+            (det_boxes_sbj[det_scores_inds[:, 0]], det_boxes_obj[det_scores_inds[:, 0]]))
+        det_labels_p_top = det_labels_prd[det_scores_inds[:, 0], det_scores_inds[:, 1]]
+        det_labels_spo_top = np.vstack(
+            (det_labels_sbj[det_scores_inds[:, 0]], det_labels_p_top, det_labels_obj[det_scores_inds[:, 0]])).transpose() 
+                    
+        det_boxes_s_top = det_boxes_so_top[:, :4]
+        det_boxes_o_top = det_boxes_so_top[:, 4:]
+        det_labels_s_top = det_labels_spo_top[:, 0]
+        det_labels_p_top = det_labels_spo_top[:, 1]
+        det_labels_o_top = det_labels_spo_top[:, 2]
+        out_dict = {}
+        out_dict['boxes_s_top'] = det_boxes_s_top
+        out_dict['boxes_o_top'] = det_boxes_o_top
+        out_dict['labels_s_top'] = det_labels_s_top
+        out_dict['labels_p_top'] = det_labels_p_top
+        out_dict['labels_o_top'] = det_labels_o_top
+        out_dict['scores_top'] = det_scores_top
+        out_dict['image'] = im_file
+        print('finished inferencing for {}'.format(im_file))
+        finals.append(out_dict)
+
+    with open('sg-out.pkl', 'wb') as fout:
+        pickle.dump(finals, fout, pickle.HIGHEST_PROTOCOL)
+    return finals
+
+def argsort_desc(scores):
+    """
+    Returns the indices that sort scores descending in a smart way
+    :param scores: Numpy array of arbitrary size
+    :return: an array of size [numel(scores), dim(scores)] where each row is the index you'd
+             need to get the score.
+    """
+    return np.column_stack(np.unravel_index(np.argsort(-scores.ravel()), scores.shape))

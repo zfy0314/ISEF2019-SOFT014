@@ -1,6 +1,8 @@
 import argparse
 import cv2
+from collections import defaultdict
 import matplotlib.pyplot as plt
+from multiprocessing import Pool
 import numpy as np
 import os
 from PIL import Image
@@ -13,12 +15,23 @@ import torch
 from torchvision import transforms 
 
 import _init_paths 
-from caption.model import Vocabulary
-from cpation.model import EncoderCNN, DecoderRNN
+from caption.build_vocab import Vocabulary
+from caption.merge import get_merged
+from caption.model import EncoderCNN, DecoderRNN
 from core.config import cfg, merge_cfg_from_file, merge_cfg_from_list, assert_and_infer_cfg
+from core.test_rel import im_detect_rels
 from core.test_engine_rel import run_inference
-from merge import get_merged
-import utils.logging
+from datasets import task_evaluation_rel as task_evaluation
+from datasets.json_dataset_rel import JsonDataset
+from modeling import model_builder_rel
+import nn as mynn
+from utils.detectron_weight_helper import load_detectron_weight
+from utils.timer import Timer
+import utils.env as envu
+import utils.net as net_utils
+import utils.subprocess as subprocess_utils
+from visualize.draw import img_and_sg
+import logging
 
 # OpenCL may be enabled by default in OpenCV3; disable it because it's not
 # thread safe and causes unwanted GPU memory allocations.
@@ -31,16 +44,16 @@ def parse_args():
     parser = argparse.ArgumentParser(description='caption demo')
 
     parser.add_argument(
-        '--image', type=str, required=True, 
+        '--image', type=str, default='/home/zfy/Data/projects/isef/DemoCodeRelease/test.jpg', 
         help='input image for generating caption')
     parser.add_argument(
-        '--encoder_path', type=str, default='models/encoder-16-4000.ckpt', 
+        '--encoder_path', type=str, default='pretrained/encoder-16-4000.ckpt', 
         help='path for trained encoder')
     parser.add_argument(
-        '--decoder_path', type=str, default='models/decoder-16-4000.ckpt', 
+        '--decoder_path', type=str, default='pretrained/decoder-16-4000.ckpt', 
         help='path for trained decoder')
     parser.add_argument(
-        '--vocab_path', type=str, default='data/vocab.pkl', 
+        '--vocab_path', type=str, default='pretrained/vocab.pkl', 
         help='path for vocabulary wrapper')
     parser.add_argument(
         '--embed_size', type=int , default=256, 
@@ -56,16 +69,17 @@ def parse_args():
         '--dataset', default='vg',
         help='training dataset')
     parser.add_argument(
-        '--cfg', dest='cfg_file', required=True,
+        '--cfg', dest='cfg_file',
+        default='configs/e2e_relcnn_X-101-64x4d-FPN_8_epochs_vg_y_loss_only.yaml',
         help='optional config file')
     parser.add_argument(
-        '--load_ckpt', help='path of checkpoint to load')
+        '--load_ckpt', default='pretrained/rel_model_step125445.pth',
+        help='path of checkpoint to load')
     parser.add_argument(
         '--load_detectron', help='path to the detectron weight pickle file')
     parser.add_argument(
-        '--output_dir', default='outputs/'
-        help='output directory to save the testing results. If not provided, '
-             'defaults to [args.load_ckpt|args.load_detectron]/../test.')
+        '--output_dir', default='outputs/',
+        help='output directory to save the testing results. If not provided')
     parser.add_argument(
         '--set', dest='set_cfgs',
         help='set config keys, will overwrite config in the cfg_file.'
@@ -90,6 +104,9 @@ def parse_args():
     return parser.parse_args()
 
 def get_base(args):
+
+    device = torch.device('cuda')
+
     transform = transforms.Compose([
         transforms.ToTensor(), 
         transforms.Normalize((0.485, 0.456, 0.406), 
@@ -123,19 +140,24 @@ def get_base(args):
             break
     sentence = ' '.join(sampled_caption)
 
-    print (sentence)
+    #print ('base: ' + sentence)
     return sentence
 
 def get_sg(args):
-    if not torch.cuda.is_available():
-        sys.exit("Need a CUDA device to run the code.")
+    def initialize_model_from_cfg(args, gpu_id=0):
+        model = model_builder_rel.Generalized_RCNN()
+        model.eval()
+        model.cuda()
 
-    logger = utils.logging.setup_logging(__name__)
-    logger.info('Called with args:')
-    logger.info(args)
+        load_name = args.load_ckpt
+        logger.info("loading checkpoint %s", load_name)
+        checkpoint = torch.load(load_name, map_location=lambda storage, loc: storage)
+        net_utils.load_ckpt(model, checkpoint['model'])
+        model = mynn.DataParallel(model, cpu_keywords=['im_info', 'roidb'], minibatch=True)
+        return model
 
-    assert (torch.cuda.device_count() == 1) ^ bool(args.multi_gpu_testing)
-
+    def argsort_desc(scores):
+        return np.column_stack(np.unravel_index(np.argsort(-scores.ravel()), scores.shape))
     cfg.VIS = args.vis
 
     if args.cfg_file is not None:
@@ -158,17 +180,19 @@ def get_sg(args):
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
 
-    logger.info('Testing with config:')
-    logger.info(pprint.pformat(cfg))
+    #logger.info('Testing with config:')
+    #logger.info(pprint.pformat(cfg))
 
     args.test_net_file, _ = os.path.splitext(__file__)
     args.cuda = True
 
     timers = defaultdict(Timer)
-    box_proposals = None      
-    im = cv2.imread(args.image)
-    model = initialize_model_from_cfg(args, gpu_id=gpu_id)
-    dataset_name, proposal = get_inference_dataset(0)
+    box_proposals = None
+    im_file = args.image  
+    im = cv2.imread(im_file)
+    model = initialize_model_from_cfg(args)
+    dataset_name = cfg.TEST.DATASETS[0]
+    proposal_file = None
     im_results = im_detect_rels(model, im, dataset_name, box_proposals, timers)
     im_results.update(dict(image=im_file))
 
@@ -215,10 +239,10 @@ def main():
     
     args = parse_args()
 
-    raw = {'sentence': '', 'graph' = {}}
+    raw = {'sentence': '', 'graph': {}}
     p = Pool(2)
-    raw['sentence'] = p.apply_async(get_base, (, ))
-    raw['graph'] = p.apply_async(get_sg, (, ))
+    raw['sentence'] = p.apply_async(get_base, (args, ))
+    raw['graph'] = p.apply_async(get_sg, (args, ))
     p.close()
     p.join()
 
@@ -226,6 +250,10 @@ def main():
     for key in raw.keys():
         result[key] = raw[key].get()
 
-    enhanced = get_merged()
-
+    enhanced = get_merged(result['sentence'].replace('<start>', '').replace('<end>', ''), result['graph'])
+    os.system('python lib/visualize/draw.py')
+    print('base: {}'.format(result['sentence']))
     print('scene-graph enhanced caption: {}'.format(enhanced))
+
+if __name__ == '__main__':
+    main()

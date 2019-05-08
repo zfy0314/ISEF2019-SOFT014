@@ -21,11 +21,7 @@ git clone https://github.com/zfy0314/ISEF2019-SOFT014.git
 ```
 pip install -r requirements.txt # add --user if necessary
 ```
-7. setup
-```
-cd lib
-sh make.sh
-```
+
 ## Download Pretrained Models
 1. download Gogle word2vec vocabulary from [here](https://code.google.com/archive/p/word2vec/)
 2. download pretrained caption encoder model and decode model from [here](https://drive.google.com/open?id=1039_0YaMubt6J1IBgYm_bROmeXe0RfRX) and [here](https://drive.google.com/open?id=11yfYNqbcAYCm7OvgzPkQYVflVrTyAct9)
@@ -48,6 +44,9 @@ the final directory should be like this:
 |  |--encoder-16-4000.ckpt
 |  |--GoogleNews-vectors-negative300.bin
 |  |--rel_model_step125445
+|  |--vocab.pkl
+|  |--objects.json
+|  |--predicates.json
 |--tools/
 |  |--_init_paths.py
 |  |--demo.py
@@ -56,6 +55,6 @@ the final directory should be like this:
 ```
 # Run Demo
 ```
-python tools/demo.py --image PATH_TO_IMAGE
+python tools/demo.py
+python lib/visualize.py # for visualization, graphviz needed
 ```
-# Sample Result
